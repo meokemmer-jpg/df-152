@@ -1,0 +1,32 @@
+{
+  "df": "DF-152",
+  "iso_timestamp": "2026-05-10T11:14:45+00:00",
+  "k17_pre_action_verification": {
+    "env_tag": "default",
+    "missing_anchors": [],
+    "ok": true
+  },
+  "last_balance_check": "2026-05-10T11:14:45+00:00",
+  "q0_k0": {
+    "decision_keywords": []
+  },
+  "source": "mock",
+  "sync_health_per_wallet": {
+    "wallet_001": {
+      "checked_at": "2026-05-10T11:14:45+00:00",
+      "status": "ok"
+    },
+    "wallet_002": {
+      "checked_at": "2026-05-10T11:14:45+00:00",
+      "status": "ok"
+    },
+    "wallet_003": {
+      "checked_at": "2026-05-10T11:14:45+00:00",
+      "status": "ok"
+    }
+  },
+  "top_holdings": [],
+  "total_value_eur": 0.0,
+  "wallets_count": 3,
+  "welle": "25"
+}
