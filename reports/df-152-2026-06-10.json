@@ -1,27 +1,27 @@
 {
   "df": "DF-152",
-  "iso_timestamp": "2026-06-10T02:57:13+00:00",
+  "iso_timestamp": "2026-06-10T11:08:18+00:00",
   "k17_pre_action_verification": {
     "env_tag": "default",
     "missing_anchors": [],
     "ok": true
   },
-  "last_balance_check": "2026-06-10T02:57:13+00:00",
+  "last_balance_check": "2026-06-10T11:08:18+00:00",
   "q0_k0": {
     "decision_keywords": []
   },
   "source": "mock",
   "sync_health_per_wallet": {
     "wallet_001": {
-      "checked_at": "2026-06-10T02:57:13+00:00",
+      "checked_at": "2026-06-10T11:08:18+00:00",
       "status": "ok"
     },
     "wallet_002": {
-      "checked_at": "2026-06-10T02:57:13+00:00",
+      "checked_at": "2026-06-10T11:08:18+00:00",
       "status": "ok"
     },
     "wallet_003": {
-      "checked_at": "2026-06-10T02:57:13+00:00",
+      "checked_at": "2026-06-10T11:08:18+00:00",
       "status": "ok"
     }
   },
