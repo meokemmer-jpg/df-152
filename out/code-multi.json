@@ -1,6 +1,6 @@
 {
   "df": "df-152",
-  "ts": "2026-06-18T21:01:58.268825+00:00",
+  "ts": "2026-06-19T06:10:25.737104+00:00",
   "crux": "[CRUX-MK]",
   "winner_provider": "incumbent-kept",
   "winner_tests_passed": true,
@@ -21,11 +21,11 @@
     {
       "provider": "codex",
       "parse_ok": true,
-      "tests_passed": false,
+      "tests_passed": true,
       "n_tests": 1,
-      "n_assert": 11,
-      "coverage_pct": null,
-      "q": 1.0,
+      "n_assert": 14,
+      "coverage_pct": 78.0,
+      "q": 1407.0,
       "error": null
     },
     {
