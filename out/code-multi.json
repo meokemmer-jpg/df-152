@@ -1,11 +1,11 @@
 {
   "df": "df-152",
-  "ts": "2026-06-22T15:25:57.805484+00:00",
+  "ts": "2026-07-06T06:36:02.460373+00:00",
   "crux": "[CRUX-MK]",
   "winner_provider": "incumbent-kept",
   "winner_tests_passed": true,
-  "incumbent_q": 1577.0,
-  "winner_q": 1577.0,
+  "incumbent_q": 1547.0,
+  "winner_q": 1547.0,
   "improved": false,
   "variants": [
     {
@@ -14,19 +14,19 @@
       "tests_passed": true,
       "n_tests": 26,
       "n_assert": 44,
-      "coverage_pct": 91.0,
-      "q": 1577.0,
+      "coverage_pct": 85.0,
+      "q": 1547.0,
       "error": null
     },
     {
       "provider": "codex",
-      "parse_ok": true,
-      "tests_passed": true,
-      "n_tests": 1,
-      "n_assert": 15,
-      "coverage_pct": 89.0,
-      "q": 1463.0,
-      "error": null
+      "parse_ok": false,
+      "tests_passed": false,
+      "n_tests": 0,
+      "n_assert": null,
+      "coverage_pct": null,
+      "q": 0.0,
+      "error": "kein 2-Block-Output (nach Retry)"
     },
     {
       "provider": "sonnet",
