@@ -1,0 +1,5 @@
+{
+  "verdict": "HOLLOW",
+  "reason": "Der Test prüft READ-ONLY/NIEMALS Auto-Trade nur über selbst gesetzte Konstanten und harmlose Report-/Rechenfunktionen, aber keinen adversarialen Wallet-/Trade-Write-Pfad oder dessen Ausbleiben.",
+  "ts": "2026-07-08T15:06:48.052723+00:00"
+}

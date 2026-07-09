@@ -1,27 +1,30 @@
 """
 DF-152 KPM-Crypto-Position-Tracker [CRUX-MK]
-Read-Only Crypto-Wallet-Tracker.
-NIEMALS Auto-Trade. NIEMALS Wallet-Write.
+Read-only crypto wallet position tracker.
+
+The tracker reads wallet and price snapshots from JSON files, calculates a
+portfolio report, and writes only report files. It never trades and never writes
+back to wallet source data.
 """
 
-import os
+from __future__ import annotations
+
+import datetime as _dt
 import json
-import datetime
+import os
 from dataclasses import dataclass, field
-from typing import List, Optional
 from pathlib import Path
+from typing import Iterable, List, Mapping, Optional
 
 
-# ── Invarianten (K_0-Guard, unveraenderlich) ──────────────────────────────────
-NEVER_AUTO_TRADE   = True   # READ-ONLY
-NEVER_WALLET_WRITE = True   # READ-ONLY
+NEVER_AUTO_TRADE = True
+NEVER_WALLET_WRITE = True
 
 REAL_API_ENV = "DF_152_REAL_API_ENABLED"
+ALLOWED_WALLET_TYPES = {"hot", "cold_hw", "cold_paper"}
 
 
-# ── Datenmodell ───────────────────────────────────────────────────────────────
-
-@dataclass
+@dataclass(frozen=True)
 class TokenBalance:
     symbol: str
     amount: float
@@ -32,11 +35,11 @@ class TokenBalance:
         return self.amount * self.usd_price
 
 
-@dataclass
+@dataclass(frozen=True)
 class WalletEntry:
     wallet_id: str
     address: str
-    wallet_type: str   # "hot" | "cold_hw" | "cold_paper"
+    wallet_type: str
     label: str
     balances: List[TokenBalance] = field(default_factory=list)
     hw_verified: bool = False
@@ -47,21 +50,25 @@ class WalletEntry:
 
     @property
     def total_usd_value(self) -> float:
-        return sum(b.usd_value for b in self.balances)
+        return sum(balance.usd_value for balance in self.balances)
 
 
-@dataclass
+@dataclass(frozen=True)
 class PositionReport:
     timestamp: str
     wallets: List[WalletEntry]
     total_usd_value: float
     cold_storage_verified: bool
-    source: str          # "mock" | "real-api"
+    source: str
     real_api_used: bool
+    status: str
+    findings: List[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
-        def _mask(addr: str) -> str:
-            return (addr[:6] + "…" + addr[-4:]) if len(addr) > 10 else addr
+        def mask_address(address: str) -> str:
+            if len(address) <= 10:
+                return address
+            return f"{address[:6]}...{address[-4:]}"
 
         return {
             "timestamp": self.timestamp,
@@ -69,95 +76,132 @@ class PositionReport:
             "cold_storage_verified": self.cold_storage_verified,
             "source": self.source,
             "real_api_used": self.real_api_used,
+            "status": self.status,
+            "findings": list(self.findings),
             "wallets": [
                 {
-                    "wallet_id": w.wallet_id,
-                    "address_masked": _mask(w.address),
-                    "wallet_type": w.wallet_type,
-                    "label": w.label,
-                    "is_cold_storage": w.is_cold_storage,
-                    "hw_verified": w.hw_verified,
-                    "total_usd_value": round(w.total_usd_value, 2),
+                    "wallet_id": wallet.wallet_id,
+                    "address_masked": mask_address(wallet.address),
+                    "wallet_type": wallet.wallet_type,
+                    "label": wallet.label,
+                    "is_cold_storage": wallet.is_cold_storage,
+                    "hw_verified": wallet.hw_verified,
+                    "total_usd_value": round(wallet.total_usd_value, 2),
                     "balances": [
                         {
-                            "symbol": b.symbol,
-                            "amount": b.amount,
-                            "usd_price": b.usd_price,
-                            "usd_value": round(b.usd_value, 2),
+                            "symbol": balance.symbol,
+                            "amount": balance.amount,
+                            "usd_price": balance.usd_price,
+                            "usd_value": round(balance.usd_value, 2),
                         }
-                        for b in w.balances
+                        for balance in wallet.balances
                     ],
                 }
-                for w in self.wallets
+                for wallet in self.wallets
             ],
         }
 
 
-# ── Kern-Tracker ──────────────────────────────────────────────────────────────
+def _read_json_file(path: Path) -> object:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError as exc:
+        raise ValueError(f"input file does not exist: {path}") from exc
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"invalid JSON in {path}: {exc.msg}") from exc
 
-class CryptoTracker:
-    """
-    Read-Only KPM Crypto Position Tracker.
-    Invariante: NIEMALS schreibt diese Klasse in Wallets.
-    Invariante: NIEMALS loest diese Klasse Trades aus.
-    """
 
-    def __init__(
-        self,
-        wallets: Optional[List[WalletEntry]] = None,
-        reports_dir: str = "reports",
-    ) -> None:
-        assert NEVER_AUTO_TRADE,   "K0-Verletzung: Auto-Trade verboten"
-        assert NEVER_WALLET_WRITE, "K0-Verletzung: Wallet-Write verboten"
-        self.wallets: List[WalletEntry] = wallets or []
-        self.reports_dir = Path(reports_dir)
+def _require_mapping(value: object, name: str) -> Mapping[str, object]:
+    if not isinstance(value, dict):
+        raise ValueError(f"{name} must be a JSON object")
+    return value
 
-    def is_real_api_enabled(self) -> bool:
-        # Nur exakt "true" aktiviert Real-Modus (case-sensitive, per ENV-Var-Rule)
-        return os.environ.get(REAL_API_ENV) == "true"
 
-    def verify_cold_storage(self) -> bool:
-        """True wenn alle Cold-Storage-Wallets hw_verified=True haben."""
-        cold = [w for w in self.wallets if w.is_cold_storage]
-        return all(w.hw_verified for w in cold)  # vacuously True wenn leer
+def _require_sequence(value: object, name: str) -> list:
+    if not isinstance(value, list):
+        raise ValueError(f"{name} must be a JSON array")
+    return value
 
-    def get_total_usd_value(self) -> float:
-        return round(sum(w.total_usd_value for w in self.wallets), 2)
 
-    def build_report(self) -> PositionReport:
-        """Erstellt Position-Report (READ-ONLY, kein Wallet-Write)."""
-        real_api = self.is_real_api_enabled()
-        return PositionReport(
-            timestamp=datetime.datetime.utcnow().isoformat() + "Z",
-            wallets=self.wallets,
-            total_usd_value=self.get_total_usd_value(),
-            cold_storage_verified=self.verify_cold_storage(),
-            source="real-api" if real_api else "mock",
-            real_api_used=real_api,
+def _number(value: object, name: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{name} must be numeric")
+    return float(value)
+
+
+def _text(value: object, name: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{name} must be a non-empty string")
+    return value.strip()
+
+
+def _bool(value: object, name: str) -> bool:
+    if not isinstance(value, bool):
+        raise ValueError(f"{name} must be boolean")
+    return value
+
+
+def load_prices_from_json(path: str | Path) -> dict[str, float]:
+    raw = _require_mapping(_read_json_file(Path(path)), "price snapshot")
+    prices_raw = _require_mapping(raw.get("prices_usd"), "prices_usd")
+    prices: dict[str, float] = {}
+    for symbol, price in prices_raw.items():
+        token = _text(symbol, "price symbol").upper()
+        numeric_price = _number(price, f"prices_usd.{token}")
+        if numeric_price < 0:
+            raise ValueError(f"prices_usd.{token} must not be negative")
+        prices[token] = numeric_price
+    return prices
+
+
+def load_wallets_from_json(path: str | Path, prices: Mapping[str, float]) -> List[WalletEntry]:
+    raw = _require_mapping(_read_json_file(Path(path)), "wallet snapshot")
+    wallets_raw = _require_sequence(raw.get("wallets"), "wallets")
+    wallets: List[WalletEntry] = []
+
+    for index, wallet_raw in enumerate(wallets_raw):
+        wallet = _require_mapping(wallet_raw, f"wallets[{index}]")
+        wallet_type = _text(wallet.get("wallet_type"), f"wallets[{index}].wallet_type")
+        if wallet_type not in ALLOWED_WALLET_TYPES:
+            raise ValueError(f"wallets[{index}].wallet_type is unsupported: {wallet_type}")
+
+        balances: List[TokenBalance] = []
+        for balance_index, balance_raw in enumerate(
+            _require_sequence(wallet.get("balances"), f"wallets[{index}].balances")
+        ):
+            balance = _require_mapping(
+                balance_raw, f"wallets[{index}].balances[{balance_index}]"
+            )
+            symbol = _text(
+                balance.get("symbol"),
+                f"wallets[{index}].balances[{balance_index}].symbol",
+            ).upper()
+            amount = _number(
+                balance.get("amount"),
+                f"wallets[{index}].balances[{balance_index}].amount",
+            )
+            if amount < 0:
+                raise ValueError(
+                    f"wallets[{index}].balances[{balance_index}].amount must not be negative"
+                )
+            if symbol not in prices:
+                raise ValueError(f"missing USD price for token {symbol}")
+            balances.append(TokenBalance(symbol=symbol, amount=amount, usd_price=prices[symbol]))
+
+        wallets.append(
+            WalletEntry(
+                wallet_id=_text(wallet.get("wallet_id"), f"wallets[{index}].wallet_id"),
+                address=_text(wallet.get("address"), f"wallets[{index}].address"),
+                wallet_type=wallet_type,
+                label=_text(wallet.get("label"), f"wallets[{index}].label"),
+                balances=balances,
+                hw_verified=_bool(wallet.get("hw_verified"), f"wallets[{index}].hw_verified"),
+            )
         )
+    return wallets
 
-    def save_report(self, report: PositionReport) -> Path:
-        """Schreibt NUR den Report. Kein Wallet-Write."""
-        self.reports_dir.mkdir(parents=True, exist_ok=True)
-        date_str = datetime.datetime.utcnow().strftime("%Y-%m-%d")
-        out = self.reports_dir / f"df-152-{date_str}.json"
-        out.write_text(
-            json.dumps(report.to_dict(), indent=2, ensure_ascii=False),
-            encoding="utf-8",
-        )
-        return out
-
-    def run(self) -> PositionReport:
-        """Haupt-Einstiegspunkt: Report erstellen und speichern (READ-ONLY)."""
-        report = self.build_report()
-        self.save_report(report)
-        return report
-
-
-# ── Mock-Daten ────────────────────────────────────────────────────────────────
 
 def mock_wallets() -> List[WalletEntry]:
-    """Standard-Mock-Wallets fuer Tests und Default-Modus."""
     return [
         WalletEntry(
             wallet_id="w001",
@@ -165,7 +209,7 @@ def mock_wallets() -> List[WalletEntry]:
             wallet_type="cold_hw",
             label="Ledger-BTC-Main",
             hw_verified=True,
-            balances=[TokenBalance(symbol="BTC", amount=1.5, usd_price=65_000.0)],
+            balances=[TokenBalance(symbol="BTC", amount=1.5, usd_price=65000.0)],
         ),
         WalletEntry(
             wallet_id="w002",
@@ -174,8 +218,8 @@ def mock_wallets() -> List[WalletEntry]:
             label="MetaMask-ETH-Daily",
             hw_verified=False,
             balances=[
-                TokenBalance(symbol="ETH",  amount=10.0,    usd_price=3_500.0),
-                TokenBalance(symbol="USDC", amount=5_000.0, usd_price=1.0),
+                TokenBalance(symbol="ETH", amount=10.0, usd_price=3500.0),
+                TokenBalance(symbol="USDC", amount=5000.0, usd_price=1.0),
             ],
         ),
         WalletEntry(
@@ -184,26 +228,121 @@ def mock_wallets() -> List[WalletEntry]:
             wallet_type="cold_hw",
             label="Trezor-ETH-Savings",
             hw_verified=True,
-            balances=[TokenBalance(symbol="ETH", amount=25.0, usd_price=3_500.0)],
+            balances=[TokenBalance(symbol="ETH", amount=25.0, usd_price=3500.0)],
         ),
     ]
 
 
-# ── CLI ───────────────────────────────────────────────────────────────────────
+class CryptoTracker:
+    """
+    Read-only KPM crypto position tracker.
+    """
 
-def __df_guarded_entry():  # K16+K11-FOUNDATION-WIRED [CRUX-MK]
+    def __init__(
+        self,
+        wallets: Optional[List[WalletEntry]] = None,
+        reports_dir: str | Path = "reports",
+        wallet_snapshot_path: str | Path | None = None,
+        price_snapshot_path: str | Path | None = None,
+    ) -> None:
+        assert NEVER_AUTO_TRADE, "K0 violation: auto-trading is forbidden"
+        assert NEVER_WALLET_WRITE, "K0 violation: wallet writes are forbidden"
+        self.wallets = wallets
+        self.reports_dir = Path(reports_dir)
+        self.wallet_snapshot_path = Path(wallet_snapshot_path) if wallet_snapshot_path else None
+        self.price_snapshot_path = Path(price_snapshot_path) if price_snapshot_path else None
+
+    @classmethod
+    def from_json_files(
+        cls,
+        wallet_snapshot_path: str | Path,
+        price_snapshot_path: str | Path,
+        reports_dir: str | Path = "reports",
+    ) -> "CryptoTracker":
+        prices = load_prices_from_json(price_snapshot_path)
+        wallets = load_wallets_from_json(wallet_snapshot_path, prices)
+        return cls(
+            wallets=wallets,
+            reports_dir=reports_dir,
+            wallet_snapshot_path=wallet_snapshot_path,
+            price_snapshot_path=price_snapshot_path,
+        )
+
+    def is_real_api_enabled(self) -> bool:
+        return os.environ.get(REAL_API_ENV) == "true"
+
+    def _wallets(self) -> List[WalletEntry]:
+        if self.wallets is not None:
+            return list(self.wallets)
+        if self.wallet_snapshot_path is None or self.price_snapshot_path is None:
+            return []
+        prices = load_prices_from_json(self.price_snapshot_path)
+        return load_wallets_from_json(self.wallet_snapshot_path, prices)
+
+    def verify_cold_storage(self) -> bool:
+        cold_wallets = [wallet for wallet in self._wallets() if wallet.is_cold_storage]
+        return all(wallet.hw_verified for wallet in cold_wallets)
+
+    def get_total_usd_value(self) -> float:
+        return round(sum(wallet.total_usd_value for wallet in self._wallets()), 2)
+
+    def assess_findings(self, wallets: Iterable[WalletEntry]) -> List[str]:
+        findings: List[str] = []
+        for wallet in wallets:
+            if wallet.is_cold_storage and not wallet.hw_verified:
+                findings.append(f"cold wallet {wallet.wallet_id} is not hardware-verified")
+            if wallet.total_usd_value == 0 and wallet.balances:
+                findings.append(f"wallet {wallet.wallet_id} has balances without USD value")
+        return findings
+
+    def build_report(self) -> PositionReport:
+        wallets = self._wallets()
+        real_api = self.is_real_api_enabled()
+        findings = self.assess_findings(wallets)
+        cold_storage_verified = all(
+            wallet.hw_verified for wallet in wallets if wallet.is_cold_storage
+        )
+        return PositionReport(
+            timestamp=_dt.datetime.utcnow().isoformat() + "Z",
+            wallets=wallets,
+            total_usd_value=round(sum(wallet.total_usd_value for wallet in wallets), 2),
+            cold_storage_verified=cold_storage_verified,
+            source="real-api" if real_api else "file-json",
+            real_api_used=real_api,
+            status="ok" if not findings else "attention",
+            findings=findings,
+        )
+
+    def save_report(self, report: PositionReport) -> Path:
+        self.reports_dir.mkdir(parents=True, exist_ok=True)
+        date_str = _dt.datetime.utcnow().strftime("%Y-%m-%d")
+        output_path = self.reports_dir / f"df-152-{date_str}.json"
+        output_path.write_text(
+            json.dumps(report.to_dict(), indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        return output_path
+
+    def run(self) -> PositionReport:
+        report = self.build_report()
+        self.save_report(report)
+        return report
+
+
+def __df_guarded_entry() -> int:
     tracker = CryptoTracker(wallets=mock_wallets())
-    report  = tracker.run()
+    report = tracker.run()
     print(f"[DF-152] total_usd_value : ${report.total_usd_value:>14,.2f}")
     print(f"[DF-152] cold_storage_ok : {report.cold_storage_verified}")
     print(f"[DF-152] source          : {report.source}")
+    print(f"[DF-152] status          : {report.status}")
     print(f"[DF-152] wallets tracked : {len(report.wallets)}")
+    return 0
 
-if __name__ == "__main__":  # K16+K11-FOUNDATION-WIRED [CRUX-MK]
+
+if __name__ == "__main__":
     try:
-        from _df_common.df_foundation import run_guarded as _rg
+        from _df_common.df_foundation import run_guarded as _run_guarded
     except Exception:
-        raise SystemExit(__df_guarded_entry())   # Foundation weg -> normal
-    raise SystemExit(_rg("df-152", __df_guarded_entry))   # K14+K16+K15+K11 echt
-
-# [CRUX-MK]
+        raise SystemExit(__df_guarded_entry())
+    raise SystemExit(_run_guarded("df-152", __df_guarded_entry))
