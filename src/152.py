@@ -340,9 +340,16 @@ def __df_guarded_entry() -> int:
     return 0
 
 
-if __name__ == "__main__":
+def __df_guarded_entry():  # K16+K11-FOUNDATION-WIRED [CRUX-MK]
     try:
         from _df_common.df_foundation import run_guarded as _run_guarded
     except Exception:
         raise SystemExit(__df_guarded_entry())
     raise SystemExit(_run_guarded("df-152", __df_guarded_entry))
+
+if __name__ == "__main__":  # K16+K11-FOUNDATION-WIRED [CRUX-MK]
+    try:
+        from _df_common.df_foundation import run_guarded as _rg
+    except Exception:
+        raise SystemExit(__df_guarded_entry())   # Foundation weg -> normal
+    raise SystemExit(_rg("df-152", __df_guarded_entry))   # K14+K16+K15+K11 echt
